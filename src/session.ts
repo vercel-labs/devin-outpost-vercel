@@ -94,6 +94,7 @@ export async function runSession(
 
   let sandbox: Sandbox | undefined;
   let claimHeld = true;
+  let serveOver = false;
   try {
     const sha = await resolveRemoteSha(
       config.staticBaseUrl,
@@ -137,20 +138,24 @@ export async function runSession(
     log(sessionId, "devin-remote serving");
 
     let remoteExited = false;
-    // The wait long-poll drops roughly every 15 min of idle; re-attach to the
+    // The wait long-poll rejects with an undici HeadersTimeoutError after
+    // ~300s (observed live; Node's default headersTimeout). Re-attach to the
     // same command by ID (sdk-reference §sandbox.getCommand) so a transient
-    // network error doesn't end the serve.
+    // drop doesn't end the serve. `serveOver` stops the loop once the status
+    // watchdog has ended the session, so it doesn't keep polling a stopped
+    // sandbox.
     const remoteDone = (async () => {
       let handle = remote;
       for (let drops = 1; ; drops++) {
         try {
           return await handle.wait();
         } catch (error) {
-          if (drops >= WAIT_REATTACH_LIMIT) throw error;
+          if (serveOver || drops >= WAIT_REATTACH_LIMIT) throw error;
           const cause = error instanceof Error && error.cause ? ` (cause: ${String(error.cause)})` : "";
           log(sessionId, `remote wait dropped (${drops}), re-attaching: ${String(error)}${cause}`);
         }
         await sleep(Math.min(drops * 2000, 30_000));
+        if (serveOver) throw new Error("serve ended while re-attaching");
         try {
           handle = await sandbox.getCommand(remote.cmdId);
         } catch (error) {
@@ -223,6 +228,7 @@ export async function runSession(
   } catch (error) {
     return { sessionId, outcome: "failed", detail: String(error) };
   } finally {
+    serveOver = true;
     if (claimHeld) {
       // Covers provisioning/bootstrap failures: the session requeues
       // immediately instead of waiting out the claim deadline.
