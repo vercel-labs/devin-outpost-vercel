@@ -5,4 +5,4 @@ research/devin-outpost-k8s/
 research/modal-devin/
 .vercel
 .env*
-orchestrator.log
+orchestrator*.log

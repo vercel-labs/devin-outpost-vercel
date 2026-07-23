@@ -10,8 +10,9 @@ runs `devin-remote serve` inside it per Devin's documented
 and stops the sandbox when the session ends. Sandboxes are named per session
 and persistent, so suspended sessions resume from a filesystem snapshot.
 
-Status: prototype, not yet live-tested against a Devin account with Outposts
-enabled. See `SPEC.md` for the doc-grounded design and open questions.
+Status: live-tested end-to-end against a real Devin account (Outposts alpha) on
+Vercel Sandbox. The full lifecycle is verified: claim, provision, bootstrap,
+spawn, monitor, clean suspend, and resume from a filesystem snapshot. See `SPEC.md` for the doc-grounded design.
 
 ## Run it
 
