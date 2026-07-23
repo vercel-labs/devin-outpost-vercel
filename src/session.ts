@@ -24,6 +24,15 @@ const FINAL_STATUS_ATTEMPTS = 5;
 /** Extend the sandbox session when less than this remains. */
 const TIMEOUT_HEADROOM_MS = 10 * 60 * 1000;
 
+/**
+ * Dropped `command.wait()` long-polls tolerated before giving up on the
+ * remote. Observed live 2026-07-23: the wait connection drops about every
+ * 15 min on an idle session (`TypeError: fetch failed`); re-attach via
+ * `sandbox.getCommand()` instead of failing the serve. A genuinely dead
+ * sandbox is still caught by the session_status watchdog.
+ */
+const WAIT_REATTACH_LIMIT = 1000;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function log(sessionId: string, message: string): void {
@@ -128,10 +137,34 @@ export async function runSession(
     log(sessionId, "devin-remote serving");
 
     let remoteExited = false;
-    const remoteDone = remote.wait().then((finished) => {
+    // The wait long-poll drops roughly every 15 min of idle; re-attach to the
+    // same command by ID (sdk-reference §sandbox.getCommand) so a transient
+    // network error doesn't end the serve.
+    const remoteDone = (async () => {
+      let handle = remote;
+      for (let drops = 1; ; drops++) {
+        try {
+          return await handle.wait();
+        } catch (error) {
+          if (drops >= WAIT_REATTACH_LIMIT) throw error;
+          const cause = error instanceof Error && error.cause ? ` (cause: ${String(error.cause)})` : "";
+          log(sessionId, `remote wait dropped (${drops}), re-attaching: ${String(error)}${cause}`);
+        }
+        await sleep(Math.min(drops * 2000, 30_000));
+        try {
+          handle = await sandbox.getCommand(remote.cmdId);
+        } catch (error) {
+          log(sessionId, `re-attach failed, will retry: ${String(error)}`);
+        }
+      }
+    })().then((finished) => {
       remoteExited = true;
       return finished;
     });
+    // The status watchdog can end the session while this promise is still
+    // pending; keep a rejection handler attached so that path can't crash the
+    // process with an unhandled rejection.
+    remoteDone.catch(() => {});
 
     // Monitor per reference §lifecycle expectations: poll session_status
     // while the remote runs; kill once terminated or the entry disappears.
@@ -142,8 +175,12 @@ export async function runSession(
       if (remoteExited) break;
 
       if (sandbox.timeout !== undefined && sandbox.timeout < TIMEOUT_HEADROOM_MS) {
-        await sandbox.extendTimeout(config.sandboxTimeoutMs);
-        log(sessionId, "extended sandbox timeout");
+        try {
+          await sandbox.extendTimeout(config.sandboxTimeoutMs);
+          log(sessionId, "extended sandbox timeout");
+        } catch (error) {
+          log(sessionId, `extendTimeout failed, retrying next poll: ${String(error)}`);
+        }
       }
 
       let status: SessionStatus | null;

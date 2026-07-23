@@ -3,3 +3,5 @@ node_modules/
 .env.local
 research/devin-outpost-k8s/
 research/modal-devin/
+.vercel
+.env*

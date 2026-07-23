@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts"
   },
