@@ -55,8 +55,13 @@ export function loadConfig(): Config {
       "https://static.devin.ai/devin-rs/remote",
     acceptorId: process.env.ACCEPTOR_ID ?? `vercel-sandbox-${os.hostname()}`,
     sandboxRuntime: process.env.SANDBOX_RUNTIME ?? "node24",
-    sandboxVcpus: integer("SANDBOX_VCPUS", 4),
-    sandboxTimeoutMs: integer("SANDBOX_TIMEOUT_MS", 4 * 60 * 60 * 1000),
+    // Cognition documents no machine size minimum (overview §Machine
+    // dependencies), so default to the cheapest sensible box; bump per
+    // outpost via SANDBOX_VCPUS for heavier repos.
+    sandboxVcpus: integer("SANDBOX_VCPUS", 2),
+    // Short timeout + the extend loop caps stranded cost if the orchestrator
+    // dies without stopping a sandbox (~30 min max, vs 4 h before).
+    sandboxTimeoutMs: integer("SANDBOX_TIMEOUT_MS", 30 * 60 * 1000),
     pollIntervalMs: integer("POLL_INTERVAL_MS", 5000),
     maxConcurrent: integer("MAX_CONCURRENT", 5),
   };
