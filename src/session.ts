@@ -109,6 +109,9 @@ export async function runSession(
       resources: { vcpus: config.sandboxVcpus },
       timeout: config.sandboxTimeoutMs,
       tags: { "devin-outpost": claim.metadata.outpost_id.slice(0, 63) },
+      // Devin only resumes the latest state; without this, every sleep/stop
+      // stacks another snapshot that lives out its 30-day TTL.
+      keepLastSnapshots: { count: 1 },
     });
     log(sessionId, `sandbox ${sandbox.name} ready (kind=${claim.spec.kind}, sha=${sha})`);
 
