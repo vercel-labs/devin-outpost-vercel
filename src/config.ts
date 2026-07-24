@@ -59,9 +59,10 @@ export function loadConfig(): Config {
     // dependencies), so default to the cheapest sensible box; bump per
     // outpost via SANDBOX_VCPUS for heavier repos.
     sandboxVcpus: integer("SANDBOX_VCPUS", 2),
-    // Short timeout + the extend loop caps stranded cost if the orchestrator
-    // dies without stopping a sandbox (~30 min max, vs 4 h before).
-    sandboxTimeoutMs: integer("SANDBOX_TIMEOUT_MS", 30 * 60 * 1000),
+    // Short timeout + the extend loop caps stranded-sandbox cost when the
+    // orchestrator dies without cleanup. Mid-session timeout death is cheap:
+    // the stop snapshots, the session requeues, the next claim restores.
+    sandboxTimeoutMs: integer("SANDBOX_TIMEOUT_MS", 20 * 60 * 1000),
     pollIntervalMs: integer("POLL_INTERVAL_MS", 5000),
     maxConcurrent: integer("MAX_CONCURRENT", 5),
   };
