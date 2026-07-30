@@ -10,16 +10,19 @@ runs `devin-remote serve` inside it per Devin's documented
 and stops the sandbox when the session ends. Sandboxes are named per session
 and persistent, so suspended sessions resume from a filesystem snapshot.
 
-Status: live-tested end-to-end against a real Devin account (Outposts alpha) on
-Vercel Sandbox. The full lifecycle is verified: claim, provision, bootstrap,
-spawn, monitor, clean suspend, and resume from a filesystem snapshot. See `SPEC.md` for the doc-grounded design.
+The core lifecycle has been live-tested end to end against a real Devin
+account: claim, provision, bootstrap, spawn, monitor, clean suspend, snapshot,
+restore, and wake. See `SPEC.md` for the design, verified behavior, and launch
+requirements.
 
-## Run it
+## Run manually
 
 Prereqs: Node 20+, a Devin account with Outposts (alpha) enabled, a Vercel
 team on Pro or Enterprise (sandbox sessions up to 24 h).
 
-1. Create an outpost (prints `outpost_env-...`):
+1. Create an outpost in Devin under **Settings → Environment → Outposts**.
+   Alternatively, use the CLI with a token that has the
+   `account.outposts.orchestrator` scope:
 
    ```bash
    devin worker outpost create vercel-sandbox --platform linux \
@@ -43,18 +46,34 @@ team on Pro or Enterprise (sandbox sessions up to 24 h).
 
 | Outposts concept | This orchestrator |
 | --- | --- |
-| Worker / acceptor | This process (`ACCEPTOR_ID`, stable per machine) |
-| Machine per session | One Vercel Sandbox microVM (`node24`, 4 vCPU default) |
-| `kind: resume` | Named persistent sandbox restored from its snapshot |
+| Worker / acceptor | This process (`ACCEPTOR_ID`; set it explicitly and keep it stable in production) |
+| Machine per session | One Vercel Sandbox microVM (`node24`, 2 vCPU default) |
+| Session state | Named persistent sandbox restored from its latest snapshot |
 | Session end | `devin-remote` exits 0 -> confirm status -> release claim -> `sandbox.stop()` |
 | Failure / crash | Claim released (or expires at the deadline) and the session requeues |
 
-## Not in v1
+The initial session timeout is 20 minutes. The orchestrator extends it whenever
+less than 10 minutes remain, up to the Vercel plan limit. Each stop retains only
+the newest snapshot.
 
-- Chrome and ffmpeg (Devin browser + screen recording) — needs a custom VCR image
-- Mapping the session's `spec.network_policy` onto Sandbox `networkPolicy`
-- SSE watch (poll every 5 s instead)
-- The partner PKCE connect flow (requires Cognition to allowlist a callback URL)
+## Public integration requirements
+
+The live-tested manual flow is complete. A public partner integration also
+requires:
+
+- **Vercel:** deploy the orchestrator as a supervised long-running service,
+  with a stable `ACCEPTOR_ID` and restart recovery for claimed sessions.
+- **Vercel:** map Devin's `spec.network_policy` to Sandbox `networkPolicy`.
+- **Vercel:** provide a custom image with Chromium and ffmpeg if browser and
+  screen-recording support are part of the launch.
+- **Vercel + Cognition:** implement the
+  [PKCE connection flow](https://docs.devin.ai/cloud/outposts/partners).
+  Vercel owns the callback and secure token storage; Cognition must allowlist
+  the exact callback URL.
+- **Cognition:** confirm the expected maximum suspended-session lifetime so
+  Vercel can set snapshot retention without risking lost session state.
+
+Polling every 5 seconds is used instead of the optional SSE watch.
 
 ## Tests
 

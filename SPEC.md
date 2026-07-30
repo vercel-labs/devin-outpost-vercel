@@ -1,30 +1,37 @@
-# Devin Outpost on Vercel Sandbox — integration spec
+# Devin Outpost on Vercel Sandbox - integration spec
 
-Status: draft v1 (2026-07-22, Elisabeth). Doc-grounded per /docs-ground-truth; every claim cites its source.
-Goal: a custom Outposts orchestrator that serves Devin Cloud sessions inside Vercel Sandbox microVMs,
-matching what Modal/E2B/Daytona/Cloudflare shipped as launch partners on 2026-07-21.
+Status: core lifecycle implemented and live-tested; public partner packaging is
+pending.
+
+Goal: serve Devin Cloud sessions inside Vercel Sandbox microVMs through a
+custom Outposts orchestrator.
 
 ## Sources
 
 Authoritative (Devin):
-- `research/outposts-reference.md` — https://docs.devin.ai/cloud/outposts/reference (fleet API, spawn contract, binary distribution)
-- `research/outposts-orchestration.md` — https://docs.devin.ai/cloud/outposts/orchestration (the loop we implement)
-- `research/outposts-overview.md` — https://docs.devin.ai/cloud/outposts/overview (machine deps, integrations list)
-- `research/outposts-partners.md` — https://docs.devin.ai/cloud/outposts/partners (PKCE partner flow; marked "rough notes, may change")
 
-Authoritative (Vercel): https://vercel.com/docs/sandbox (sdk-reference, concepts/authentication,
-concepts/runtimes, pricing; snapshot consulted 2026-06-30).
+- [Reference](https://docs.devin.ai/cloud/outposts/reference): Fleet API,
+  binary distribution, and spawn contract.
+- [Orchestration](https://docs.devin.ai/cloud/outposts/orchestration): queue,
+  claim, worker, and teardown lifecycle.
+- [Overview](https://docs.devin.ai/cloud/outposts/overview): requirements and
+  limitations.
+- [Partner integrations](https://docs.devin.ai/cloud/outposts/partners): PKCE
+  connection flow. Cognition marks this flow as early and subject to change.
 
-Secondary (working partner example, not truth): `research/modal-devin/` (modal-labs/modal-devin) and
-`research/devin-outpost-k8s/` (CognitionAI reference operator).
+Authoritative (Vercel):
+
+- [Vercel Sandbox](https://vercel.com/docs/sandbox): authentication, runtimes,
+  SDK, persistence, pricing, and limits.
+
+Local snapshots of the Devin pages are stored under `research/`.
 
 ## Architecture
 
-One long-running Node.js daemon ("orchestrator"). No inbound ports; everything is outbound HTTPS/WSS
-(overview: "Workers only need outbound HTTPS access"). Per pending session it provisions one Vercel
-Sandbox, runs `devin-remote serve` inside it, and tears down on session end. This is the documented
-custom-orchestrator path (orchestration.md §"Building a custom orchestrator"), NOT the CLI path — see
-"Why not the CLI" below.
+One long-running Node.js daemon watches a Devin outpost queue. For each pending
+session, it provisions one Vercel Sandbox, runs `devin-remote serve`, and stops
+the sandbox when the session ends. The worker needs outbound HTTPS and WSS; it
+does not expose an inbound port.
 
 ```
 Devin Cloud (agent loop + queue)            Orchestrator (this repo)             Vercel Sandbox
@@ -37,56 +44,46 @@ Devin Cloud (agent loop + queue)            Orchestrator (this repo)            
  POST /devins/{id}/release                  ◀─on exit────── └─ sandbox.stop() (persistent snapshot)
 ```
 
-## Session lifecycle (doc-cited)
+## Session lifecycle
 
 1. **Poll queue.** `GET /opbeta/outposts/devins?outpost=<id>&phase=pending`, Bearer v3 service-user
    token with `account.outposts.machine` scope (reference §Authentication, §List queued sessions).
-   Upsert by `metadata.session_id`; delivery is at-least-once (reference §pagination). v1 polls every
-   `POLL_INTERVAL` (5s, same default as `devin worker start --poll-interval-secs`); SSE watch is a
-   listed follow-up.
+   Upsert by `metadata.session_id`; delivery is at-least-once. The current
+   implementation polls every 5 seconds. Devin also supports a reconnecting SSE
+   watch.
 2. **Filter.** Only `spec.platform == "linux"` (Sandbox is Linux x64; reference §platforms table).
 3. **Claim before provisioning.** `POST /devins/{session_id}/claim {"acceptor_id"}`. Atomic CAS; 409
-   means another worker won — "normal operation, not an error" (orchestration §Centralization-free
-   scheduling). Success returns `status.connect_token`, `status.gateway_url`, `status.claim_deadline`;
-   worker must be ready before the deadline or the claim expires back to the queue (reference §Claim).
+   means another worker won. Success returns `status.connect_token`,
+   `status.gateway_url`, and `status.claim_deadline`. The worker must be ready
+   before that deadline or the claim returns to the queue.
 4. **Provision.** `Sandbox.getOrCreate({ name: "devin-<session_id>", runtime, resources.vcpus,
-   timeout, tags })` (sdk-reference §Sandbox.getOrCreate). Named + persistent-by-default sandboxes give
-   us `spec.kind == "resume"` nearly for free: stop snapshots the filesystem, get-by-name restores it
-   (sdk-reference §Sandbox.create: "persistent by default"). On any provisioning failure → release the
-   claim immediately (orchestration §3).
+   timeout, tags, keepLastSnapshots })`. The deterministic name restores the
+   session's latest persistent snapshot regardless of whether Devin reports
+   `spec.kind` as `new` or `resume`. Provisioning failures release the claim.
 5. **Bootstrap** (one `runCommand` bash script, idempotent):
    - SHA = `spec.remote_binary_sha` if pinned, else `GET https://static.devin.ai/devin-rs/remote/latest_linux_x64`
-     (reference §Remote binary distribution: "If the session's queue entry includes a spec.remote_binary_sha, use that").
+     (reference §Remote binary distribution).
    - `curl -fL .../devin-remote_${SHA}_linux_x64`, verify `.sha256` with `sha256sum -c`, `chmod +x`
-     (exact commands from reference §Download and verify).
-   - `git` is required (overview §Machine dependencies) and preinstalled in Sandbox (runtimes.md §Available packages). ✓
+     (reference §Download and verify).
+   - `git` is required by Devin and preinstalled in the Sandbox runtime.
 6. **Spawn** per the spawn contract (reference §Spawn contract), detached:
    - `devin-remote serve` with exactly: `DEVIN_OUTPOST_GATEWAY_URL`, `DEVIN_OUTPOST_CONNECT_TOKEN`,
      `DEVIN_OUTPOST_SESSION_ID`, plus `DEVIN_REMOTE_STATE_DIR=/vercel/sandbox/.devin/state/<session_id>`
-     ("Always set this" — reference). Clean env: pass only these; do not leak orchestrator secrets
-     ("Do not leak anything the agent should not be able to see" — reference).
-   - cwd = `/vercel/sandbox/workspace` (repos dir; the remote clones via git — overview lists git "for
-     cloning and all repository operations").
-7. **Monitor** (two signals, per reference §lifecycle expectations):
+     as strongly recommended by Devin.
+   - cwd = `/vercel/sandbox/workspace`.
+7. **Monitor** using two signals:
    - Poll `GET /devins/{session_id}` → `status.session_status` while the remote runs; kill the sandbox
-     once it reaches `terminated` or the queue entry disappears. modal-devin additionally tolerates N
-     consecutive `suspended` reads before acting (their comment: status "can briefly read suspended") —
-     we copy that guard (secondary source, labeled).
+     once it reaches `terminated` or the queue entry disappears. The
+     implementation tolerates three consecutive `suspended` reads before
+     acting because this status was observed transiently during live testing.
    - When the detached command exits (clean exit 0 = session ended), re-read `session_status` a few
-     times until `suspended`/`terminated` ("the status update can lag the exit by a few seconds, so
-     re-read a few times" — reference), then release the claim.
+     times until `suspended`/`terminated`, then release the claim.
    - Extend the sandbox timeout as it runs low (`sandbox.timeout` remaining ms + `extendTimeout()`,
-     sdk-reference §extendTimeout), up to the plan max.
+     SDK reference §extendTimeout), up to the plan max.
 8. **Teardown.** `sandbox.stop()` (auto-snapshot on stop for persistence). Release claim if still held.
-   On SIGINT/SIGTERM: release all held claims so sessions requeue instantly (reference §Release).
-
-## Why not `devin worker start` inside the sandbox
-
-The CLI path would be simpler, but modal-devin's source records (comment dated, "verified live
-2026-07-19") that the CLI cannot parse the claim-mode hand-off and they fell back to an undocumented
-`DEVIN_REMOTE_SESSION_TOKEN` env var. That variable appears nowhere in Devin's docs. We build on the
-*documented* spawn contract (`devin-remote serve` + three `DEVIN_OUTPOST_*` vars) instead. UNVERIFIED
-whether the CLI bug still exists; irrelevant to our path.
+   The deployed service must allow cleanup to complete during graceful
+   shutdown. If the process dies, the claim expires and the 20-minute sandbox
+   timeout limits stranded compute.
 
 ## Auth & config (all via env)
 
@@ -96,37 +93,42 @@ whether the CLI bug still exists; irrelevant to our path.
 | `DEVIN_OUTPOST_ID` | which queue to serve | `devin worker outpost create` prints it (reference §CLI) |
 | `DEVIN_API_URL` | default `https://api.devin.ai` | reference §Fleet API |
 | `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | Sandbox SDK auth outside Vercel | authentication.md §Access tokens |
-| `ACCEPTOR_ID` | stable worker identity; never shared across machines | orchestration §Centralization-free scheduling |
-| `SANDBOX_VCPUS` (default 4), `SANDBOX_RUNTIME` (default `node24`), `SANDBOX_TIMEOUT_MS` (default 4h), `POLL_INTERVAL_MS` (default 5000), `MAX_CONCURRENT` (default 5) | sizing | sdk-reference §Sandbox.create; pricing.md |
+| `ACCEPTOR_ID` | stable worker identity; set explicitly in production and never share across machines | reference §CLI |
+| `SANDBOX_VCPUS` (default 2), `SANDBOX_RUNTIME` (default `node24`), `SANDBOX_TIMEOUT_MS` (default 1200000), `POLL_INTERVAL_MS` (default 5000), `MAX_CONCURRENT` (default 5) | sizing | Sandbox SDK |
 
-## Fit & limits (quantified)
+## Verified behavior
 
-- Sandbox max session: 45 min Hobby / **24 h Pro+Enterprise** (pricing.md §Max Runtime Duration). Long
-  Devin sessions beyond 24 h would hit the wall; suspend/resume via persistent sandboxes is the answer.
-- vCPU allocation rate: Pro 200 vCPU/min → 50 concurrent 4-vCPU session starts/min (pricing.md §rate limits).
-- >~16 coordinators watching one outpost → contact Cognition account team first (orchestration note).
-- Outposts is alpha, multi-tenant Devin only, not Dedicated Tenant (overview §Limitations).
+Live testing on July 22-23, 2026 verified:
 
-## v1 scope cuts (explicit)
+- Claim, Sandbox provisioning, binary download and SHA verification, and
+  `devin-remote` connection.
+- Clean suspend, automatic snapshot on stop, restore, and wake from the same
+  filesystem state.
+- Recovery from dropped `command.wait()` long polls by reattaching to the same
+  detached command with `sandbox.getCommand()`.
+- Upgrade to a newly pinned `devin-remote` binary after restoring a snapshot.
+- Snapshot storage remains bounded with `keepLastSnapshots: { count: 1 }`.
 
-- **Chrome/ffmpeg absent** → Devin's browser + screen-recording features unavailable (overview
-  §Machine dependencies marks both optional). Follow-up: VCR custom image with Chromium + ffmpeg
-  (sdk-reference `image:` param).
-- **`spec.network_policy` not enforced.** Queue entries carry hostname/CIDR allowlists (reference
-  §Queue entry); Sandbox has `networkPolicy` on create (sdk-reference). Mapping one to the other is a
-  natural v2 and a differentiator vs other partners.
-- **Polling, not SSE watch.** Docs support both; watch streams end ≤5 min and need reconnect loops
-  (reference §Watch semantics).
-- **PKCE partner flow** (partners.md) is the productized "click Connect in Devin" experience. Needs
-  Cognition to allowlist our callback URL — a Jared conversation, not code. v1 uses a manually created
-  outpost + token.
+Vercel Sandbox sessions can run for up to 24 hours on Pro and Enterprise. The
+orchestrator starts with a 20-minute timeout and extends it when less than 10
+minutes remain. Persistent snapshots carry the filesystem across sessions and
+expire 30 days after last use by default.
 
-## Open questions (not answerable from docs)
+## Public launch requirements and ownership
 
-1. Which Vercel team/project should own the outpost sandboxes for a live test? (Billing lands there.)
-2. Do we have a Devin account with Outposts (alpha) enabled? The PKCE flow needs Cognition to enable
-   the account + allowlist callbacks — ask Jared in #shared-cognition.
-3. Claim-deadline headroom: the deadline value is server-assigned and its typical magnitude is
-   undocumented; sandbox cold start (ms) + binary download should fit comfortably, but UNVERIFIED
-   until a live run.
-4. Does `devin-remote` need anything beyond git at runtime that AL2023 lacks? UNVERIFIED until live run.
+| Requirement | Owner | Status |
+| --- | --- | --- |
+| Supervised long-running deployment with stable `ACCEPTOR_ID` | Vercel | Open |
+| Recover sessions already claimed by the same acceptor after a restart | Vercel | Open |
+| Map `spec.network_policy` to Sandbox `networkPolicy` | Vercel | Open |
+| Chromium + ffmpeg image for browser and recording support | Vercel | Open, if included at launch |
+| PKCE callback, state validation, and encrypted token storage | Vercel | Open |
+| Allowlist Vercel's exact PKCE callback URL | Cognition | Open |
+| Confirm maximum suspended-session lifetime | Cognition | Open |
+| Choose snapshot retention from that lifetime and cleanup behavior | Vercel | Blocked on Cognition |
+| Validate public-integration acceptance criteria | Vercel + Cognition | Open |
+| Coordinate changelog and co-launch | Vercel + Cognition | Open |
+
+The current manual-token flow is suitable for continued testing and Cognition
+review. It should not be presented as the finished customer-facing integration
+until the required launch items above are closed.
