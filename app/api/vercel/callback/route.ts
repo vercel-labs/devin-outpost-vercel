@@ -69,6 +69,7 @@ export async function GET(request: Request): Promise<Response> {
       "Content-Security-Policy":
         "default-src 'none'; connect-src 'self'; form-action https://app.devin.ai; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
       "Content-Type": "text/html; charset=utf-8",
+      "Cross-Origin-Opener-Policy": "unsafe-none",
       "Referrer-Policy": "no-referrer",
     },
   });
