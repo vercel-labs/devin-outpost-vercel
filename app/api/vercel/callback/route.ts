@@ -12,6 +12,7 @@ import {
   safeVercelNextUrl,
   vercelIntegrationRedirectUrl,
 } from "../../../../src/vercel-integration";
+import { renderVercelInstallPage } from "../../../../src/vercel-install-page";
 
 export const runtime = "nodejs";
 
@@ -57,18 +58,26 @@ export async function GET(request: Request): Promise<Response> {
     },
   });
 
-  const response = NextResponse.redirect(
-    buildDevinConnectUrl({ callbackUrl, challenge: pkce.challenge }),
-    303,
-  );
+  const connectUrl = buildDevinConnectUrl({
+    callbackUrl,
+    challenge: pkce.challenge,
+  });
+  const response = new NextResponse(renderVercelInstallPage(connectUrl.toString()), {
+    status: 200,
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Security-Policy":
+        "default-src 'none'; connect-src 'self'; form-action https://app.devin.ai; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+      "Content-Type": "text/html; charset=utf-8",
+      "Referrer-Policy": "no-referrer",
+    },
+  });
   response.cookies.set("devin_connection_state", signBrowserState(stateId), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: 10 * 60,
-    path: "/api/devin/callback",
+    path: "/api",
   });
-  response.headers.set("Cache-Control", "no-store");
-  response.headers.set("Referrer-Policy", "no-referrer");
   return response;
 }

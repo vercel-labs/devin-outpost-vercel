@@ -3,7 +3,7 @@
 Run [Devin Outposts](https://docs.devin.ai/cloud/outposts/overview) sessions in
 isolated [Vercel Sandbox](https://vercel.com/docs/sandbox) microVMs.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel-labs%2Fdevin-outpost-vercel&env=CRON_SECRET&envDescription=A+random+setup+and+cron+secret+of+at+least+16+characters.&envLink=https%3A%2F%2Fgithub.com%2Fvercel-labs%2Fdevin-outpost-vercel%23environment-variables&integration-ids=oac_V3R1GIpkoJorr6fqyiwdhl17&project-name=devin-outpost-vercel&repository-name=devin-outpost-vercel)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Ferulkey%2Fdevin-outpost-vercel-install&integration-ids=oac_doeREEVvypk1AfuPfktJzjpZ&project-name=devin-outpost-vercel&repository-name=devin-outpost-vercel)
 
 The deployed control plane runs entirely on Vercel:
 
@@ -25,29 +25,19 @@ Prerequisites: a Devin account with Outposts enabled and administrator access,
 and a Vercel Pro or Enterprise team. The one-minute cron schedule and
 up-to-24-hour Sandbox sessions require Pro or Enterprise.
 
-1. Click **Deploy with Vercel** above.
-2. Approve the required Upstash integration and create its Redis database. It
-   stores only the short-lived PKCE handoff and encrypted Devin connection.
-3. Enter a random `CRON_SECRET` of at least 16 characters and deploy.
-4. Open the production deployment, enter that setup secret, and click
-   **Connect Devin**.
-5. Approve the outpost in Devin, then select it as a session's virtual
+1. Click **Deploy with Vercel** above and choose the destination Vercel team.
+2. Add **Devin Outposts for Vercel** when the Deploy Button asks for the
+   required integration.
+3. Sign in to Devin as an administrator, review the suggested outpost name,
+   and click **Connect**.
+4. Let Vercel finish creating and deploying the project.
+5. In Devin, start a session and select the new Vercel outpost as its virtual
    environment.
 
-The partner callback URL must currently be registered by Cognition before step
-4. A live July 30, 2026 test reached Devin's consent screen but **Create**
-returned `Callback URL is not on the allowed callbacks list` for:
-
-```text
-https://devin-outpost-vercel.playground-vercel.tools/api/devin/callback
-```
-
-Cognition's early partner contract requires every callback URL to be sent in
-advance and does not document an OAuth `state` parameter. A broadly
-self-service Deploy Button therefore still requires Cognition to support
-dynamic partner callbacks (or a standard state-bearing OAuth client). The
-current signed, single-use browser cookie correlates a callback to the browser
-that began the ten-minute PKCE flow.
+No Devin token, API key, or setup secret is copied through the browser. The
+integration exchanges Devin's short-lived authorization code server-to-server
+and adds the encrypted runtime configuration directly to the newly created
+Vercel project.
 
 Cron jobs run only on production deployments. The first queue poll occurs
 within one minute of deployment; after that, the Fluid dispatcher polls every
@@ -60,10 +50,10 @@ three seconds during its 57-second invocation.
 | `DEVIN_OUTPOSTS_TOKEN` | Local/manual fallback | Devin v3 service-user token with `account.outposts.machine` scope |
 | `DEVIN_OUTPOST_ID` | Local/manual fallback | Outpost ID, such as `outpost_env-...` |
 | `ALLOW_MANUAL_DEVIN_CREDENTIALS` | No | Must be `true` to opt into the environment-variable fallback in a Vercel deployment. Local mode does not require it. |
-| `CRON_SECRET` | Yes in cloud mode | Random value of at least 16 characters. Vercel Cron sends it as a bearer token to `/api/cron`. |
-| `DEVIN_CONNECTION_SECRET` | No | Separate setup and at-rest encryption secret. Defaults to domain-separated keys derived from `CRON_SECRET`. |
+| `CRON_SECRET` | Yes in cloud mode | Random value of at least 16 characters. The Deploy Button integration generates it automatically. Vercel Cron sends it as a bearer token to `/api/cron`. |
+| `DEVIN_CONNECTION_SECRET` | No | Separate setup and at-rest encryption secret. The Deploy Button integration generates it automatically. |
 | `DEVIN_OAUTH_CALLBACK_URL` | Recommended | Fixed production callback registered with Cognition. Defaults to the Vercel project's production URL. |
-| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Yes for partner flow | Injected automatically by the required Upstash Marketplace integration. |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Integration controller only | Store short-lived encrypted PKCE transactions on the hosted integration controller. End-user Outpost projects do not need to configure these values. |
 | `ACCEPTOR_ID` | No | Stable worker identity. Cloud mode defaults to `vercel-sandbox-$DEVIN_OUTPOST_ID`. |
 | `DEVIN_API_URL` | No | Defaults to `https://api.devin.ai` |
 | `DEVIN_WORKER_STATIC_BASE_URL` | No | Defaults to Devin's remote-binary origin |

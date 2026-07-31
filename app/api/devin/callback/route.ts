@@ -3,12 +3,14 @@ import { verifyBrowserState } from "../../../../src/connection-crypto";
 import {
   consumePkceTransaction,
   saveDevinConnection,
+  saveVercelCompletion,
 } from "../../../../src/connection-store";
 import {
   callbackUrlFor,
   exchangeConnectionCode,
 } from "../../../../src/devin-partner";
 import { configureOutpostProject } from "../../../../src/vercel-integration";
+import { renderDevinConnectedPage } from "../../../../src/vercel-install-page";
 
 export const runtime = "nodejs";
 
@@ -60,12 +62,31 @@ export async function GET(request: Request): Promise<Response> {
       "Devin connection exchange failed",
       error instanceof Error ? error.message : "unknown error",
     );
+    if (transaction.vercelProject) {
+      await saveVercelCompletion(stateId, { status: "failed" });
+    }
     return errorResponse("Devin could not complete the connection.", 502);
   }
 
+  if (transaction.vercelProject) {
+    await saveVercelCompletion(stateId, {
+      status: "complete",
+      nextUrl: transaction.vercelProject.nextUrl,
+    });
+    return new Response(renderDevinConnectedPage(), {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Security-Policy":
+          "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+        "Content-Type": "text/html; charset=utf-8",
+        "Referrer-Policy": "no-referrer",
+      },
+    });
+  }
+
   const response = NextResponse.redirect(
-    transaction.vercelProject?.nextUrl ??
-      new URL("/?connected=1", request.url).toString(),
+    new URL("/?connected=1", request.url).toString(),
     303,
   );
   response.cookies.set("devin_connection_state", "", {

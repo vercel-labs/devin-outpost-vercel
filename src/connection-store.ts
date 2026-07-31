@@ -6,6 +6,7 @@ import {
 
 const CONNECTION_KEY = "devin-outpost-vercel:connection:v1";
 const PKCE_PREFIX = "devin-outpost-vercel:pkce:v1:";
+const VERCEL_COMPLETION_PREFIX = "devin-outpost-vercel:vercel-completion:v1:";
 
 export interface DevinConnection {
   accessToken: string;
@@ -40,6 +41,11 @@ export interface PkceTransaction {
     cronSecret: string;
     connectionSecret: string;
   };
+}
+
+export interface VercelCompletion {
+  status: "complete" | "failed";
+  nextUrl?: string;
 }
 
 function redis(): Redis {
@@ -127,4 +133,24 @@ export async function consumePkceTransaction(
 ): Promise<PkceTransaction | null> {
   const stored = await redis().getdel<string>(`${PKCE_PREFIX}${stateId}`);
   return stored ? decryptConnectionPayload<PkceTransaction>(stored) : null;
+}
+
+export async function saveVercelCompletion(
+  stateId: string,
+  completion: VercelCompletion,
+): Promise<void> {
+  await redis().set(
+    `${VERCEL_COMPLETION_PREFIX}${stateId}`,
+    encryptConnectionPayload(completion),
+    { ex: 10 * 60 },
+  );
+}
+
+export async function getVercelCompletion(
+  stateId: string,
+): Promise<VercelCompletion | null> {
+  const stored = await redis().get<string>(
+    `${VERCEL_COMPLETION_PREFIX}${stateId}`,
+  );
+  return stored ? decryptConnectionPayload<VercelCompletion>(stored) : null;
 }
