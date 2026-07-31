@@ -7,8 +7,8 @@ import {
   type SessionStatus,
 } from "./devin.js";
 
-const WORKSPACE_DIR = "/vercel/sandbox/workspace";
-const DEVIN_DIR = "/vercel/sandbox/.devin";
+export const WORKSPACE_DIR = "/vercel/sandbox/workspace";
+export const DEVIN_DIR = "/vercel/sandbox/.devin";
 
 /**
  * Consecutive `suspended` liveness reads tolerated before concluding the
@@ -35,6 +35,40 @@ const WAIT_REATTACH_LIMIT = 1000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Devin documents when the claim expires but not its wire format. Live
+ * reference implementations use Unix seconds; accepting milliseconds and ISO
+ * strings keeps the orchestrator compatible with both observed representations.
+ */
+export function claimDeadlineEpochMs(
+  deadline: number | string | null,
+): number | null {
+  if (deadline === null) return null;
+
+  const numeric =
+    typeof deadline === "number" ? deadline : Number(deadline.trim());
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric >= 1_000_000_000_000 ? numeric : numeric * 1000;
+  }
+
+  if (typeof deadline === "string") {
+    const parsed = Date.parse(deadline);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  throw new Error(`unsupported claim deadline ${JSON.stringify(deadline)}`);
+}
+
+export function assertClaimActive(
+  deadline: number | string | null,
+  stage: string,
+): void {
+  const expiresAt = claimDeadlineEpochMs(deadline);
+  if (expiresAt !== null && Date.now() >= expiresAt) {
+    throw new Error(`claim deadline expired before ${stage}`);
+  }
+}
+
 function log(sessionId: string, message: string): void {
   console.log(`[${sessionId}] ${message}`);
 }
@@ -44,21 +78,34 @@ export function sandboxNameFor(sessionId: string): string {
   return sessionId.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 63);
 }
 
-function bootstrapScript(staticBaseUrl: string, sha: string): string {
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+export function bootstrapScript(staticBaseUrl: string, sha: string): string {
+  const quotedDevinDir = shellQuote(DEVIN_DIR);
+  const quotedWorkspaceDir = shellQuote(WORKSPACE_DIR);
+  const quotedSha = shellQuote(sha);
+  const binaryUrl = shellQuote(
+    `${staticBaseUrl}/devin-remote_${sha}_linux_x64`,
+  );
+  const checksumUrl = shellQuote(
+    `${staticBaseUrl}/devin-remote_${sha}_linux_x64.sha256`,
+  );
   // Exact download-and-verify sequence from the Outposts reference
   // (§Remote binary distribution), made idempotent so kind=resume sandboxes
   // restored from a snapshot skip the download when the pinned SHA matches.
   return `
 set -euo pipefail
-mkdir -p ${DEVIN_DIR}/bin ${DEVIN_DIR}/state ${WORKSPACE_DIR}
-cd ${DEVIN_DIR}/bin
-if [ ! -x devin-remote ] || [ "$(cat devin-remote.sha 2>/dev/null)" != "${sha}" ]; then
-  curl -fL "${staticBaseUrl}/devin-remote_${sha}_linux_x64" -o devin-remote.tmp
-  curl -fsSL "${staticBaseUrl}/devin-remote_${sha}_linux_x64.sha256" -o devin-remote.sha256
+mkdir -p ${quotedDevinDir}/bin ${quotedDevinDir}/state ${quotedWorkspaceDir}
+cd ${quotedDevinDir}/bin
+if [ ! -x devin-remote ] || [ "$(cat devin-remote.sha 2>/dev/null)" != ${quotedSha} ]; then
+  curl -fL ${binaryUrl} -o devin-remote.tmp
+  curl -fsSL ${checksumUrl} -o devin-remote.sha256
   echo "$(cat devin-remote.sha256)  devin-remote.tmp" | sha256sum -c
   mv devin-remote.tmp devin-remote
   chmod +x devin-remote
-  echo "${sha}" > devin-remote.sha
+  printf '%s\n' ${quotedSha} > devin-remote.sha
 fi
 `.trim();
 }
@@ -67,6 +114,10 @@ export interface SessionResult {
   sessionId: string;
   outcome: "completed" | "ended-externally" | "failed";
   detail?: string;
+}
+
+export interface SessionDependencies {
+  getOrCreateSandbox?: typeof Sandbox.getOrCreate;
 }
 
 /**
@@ -78,6 +129,7 @@ export async function runSession(
   client: DevinFleetClient,
   config: Config,
   claim: QueueEntry,
+  dependencies: SessionDependencies = {},
 ): Promise<SessionResult> {
   const sessionId = claim.metadata.session_id;
   const { connect_token: connectToken, gateway_url: gatewayUrl } = claim.status;
@@ -96,6 +148,7 @@ export async function runSession(
   let claimHeld = true;
   let serveOver = false;
   try {
+    assertClaimActive(claim.status.claim_deadline, "binary resolution");
     const sha = await resolveRemoteSha(
       config.staticBaseUrl,
       claim.spec.remote_binary_sha,
@@ -103,7 +156,9 @@ export async function runSession(
 
     // Named + persistent (the default) so kind=resume sessions restore the
     // same filesystem the previous run snapshotted on stop.
-    sandbox = await Sandbox.getOrCreate({
+    const getOrCreateSandbox =
+      dependencies.getOrCreateSandbox ?? Sandbox.getOrCreate.bind(Sandbox);
+    sandbox = await getOrCreateSandbox({
       name: sandboxNameFor(sessionId),
       runtime: config.sandboxRuntime,
       resources: { vcpus: config.sandboxVcpus },
@@ -113,6 +168,7 @@ export async function runSession(
       // stacks another snapshot that lives out its 30-day TTL.
       keepLastSnapshots: { count: 1 },
     });
+    assertClaimActive(claim.status.claim_deadline, "sandbox bootstrap");
     log(sessionId, `sandbox ${sandbox.name} ready (kind=${claim.spec.kind}, sha=${sha})`);
 
     const bootstrap = await sandbox.runCommand("bash", ["-c", bootstrapScript(config.staticBaseUrl, sha)]);
@@ -121,6 +177,7 @@ export async function runSession(
         `bootstrap failed (exit ${bootstrap.exitCode}): ${await bootstrap.stderr()}`,
       );
     }
+    assertClaimActive(claim.status.claim_deadline, "devin-remote spawn");
 
     // Spawn contract (reference §Spawn contract): `devin-remote serve` with
     // exactly the DEVIN_OUTPOST_* credentials plus a per-session state dir.
@@ -182,7 +239,11 @@ export async function runSession(
       await Promise.race([remoteDone, sleep(config.pollIntervalMs)]);
       if (remoteExited) break;
 
-      if (sandbox.timeout !== undefined && sandbox.timeout < TIMEOUT_HEADROOM_MS) {
+      const expiresAt = sandbox.expiresAt?.getTime();
+      if (
+        expiresAt !== undefined &&
+        expiresAt - Date.now() < TIMEOUT_HEADROOM_MS
+      ) {
         try {
           await sandbox.extendTimeout(config.sandboxTimeoutMs);
           log(sessionId, "extended sandbox timeout");
@@ -217,6 +278,9 @@ export async function runSession(
     if (!endedExternally) {
       const finished = await remoteDone;
       log(sessionId, `devin-remote exited with code ${finished.exitCode}`);
+      if (finished.exitCode !== 0) {
+        throw new Error(`devin-remote exited with code ${finished.exitCode}`);
+      }
       // Docs: confirm suspended/terminated before releasing; the status can
       // lag the exit by a few seconds.
       await confirmSessionEnded(client, sessionId, config.pollIntervalMs);

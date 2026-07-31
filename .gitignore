@@ -6,3 +6,7 @@ research/modal-devin/
 .vercel
 .env*
 orchestrator*.log
+/.swc
+/.next
+/graphify-out
+*.tsbuildinfo

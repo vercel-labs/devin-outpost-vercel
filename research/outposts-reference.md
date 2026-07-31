@@ -19,6 +19,8 @@ Workers and orchestrators authenticate with a [v3 API token](/api-reference/v3/o
 
 Outposts are scoped to your **account** and shared across all of its organizations.
 
+`devin worker start` can also run without a pre-provisioned token by using your existing CLI login — see [Starting without a token](#starting-without-a-token).
+
 ## CLI
 
 ### `devin worker start`
@@ -31,10 +33,10 @@ devin worker start --outpost=<outpost_id>
 
 | Flag                               | Environment variable           | Description                                                                                                                                                                    |
 | ---------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--outpost`                        | —                              | Only claim sessions from this outpost. If omitted in an interactive terminal, the worker prompts you to pick from your account's outposts.                                     |
+| `--outpost`                        | —                              | Only claim sessions from this outpost, given as its name or its id. If omitted in an interactive terminal, the worker prompts you to pick from your account's outposts.        |
 | `--session` (alias `--session-id`) | —                              | Claim and serve one specific session, then exit.                                                                                                                               |
 | `--acceptor-id`                    | `DEVIN_WORKER_ACCEPTOR_ID`     | Stable worker identity used for claims, renewals, and restart recovery. Defaults to a generated ID persisted under the worker data directory. Never share one across machines. |
-| `--token`                          | `DEVIN_OUTPOSTS_TOKEN`         | Auth token for the worker. If both are unset, the command errors.                                                                                                              |
+| `--token`                          | `DEVIN_OUTPOSTS_TOKEN`         | Auth token for the worker. Optional — if both are unset, the worker falls back to your CLI login (see [Starting without a token](#starting-without-a-token)).                  |
 | `--once`                           | —                              | Exit after serving one session instead of returning to the queue.                                                                                                              |
 | `--api-url`                        | `DEVIN_API_URL`                | Devin API base URL. Defaults to `https://api.devin.ai`.                                                                                                                        |
 | `--cache-dir`                      | `DEVIN_WORKER_CACHE_DIR`       | Directory where downloaded `devin-remote` binaries are cached. Defaults to `~/.devin/worker/cache`.                                                                            |
@@ -45,6 +47,16 @@ devin worker start --outpost=<outpost_id>
 | `--poll-interval-secs`             | —                              | Seconds between queue polls and session status checks. Defaults to `5`.                                                                                                        |
 
 The worker's environment can also carry `DEVIN_CHROME_PATH` to point sessions at a Chrome/Chromium binary for browser features.
+
+#### Starting without a token
+
+A pre-provisioned outposts token is not required. With no `--token` and no `DEVIN_OUTPOSTS_TOKEN`, `devin worker start` creates an outpost using your existing CLI login and reuses the saved worker token on later runs.
+
+#### Platform validation
+
+The worker checks that the machine's OS matches the outpost's platform and fails with a clear message on a mismatch, rather than repeatedly claiming and releasing queued sessions.
+
+Windows x64 machines are supported: the worker downloads the correct `devin-remote` binary and passes the Windows system environment through to sessions.
 
 ### `devin worker outpost create`
 
@@ -304,6 +316,7 @@ chmod +x devin-remote
 | Suffix            | OS / Architecture   |
 | ----------------- | ------------------- |
 | `linux_x64`       | Linux x86\_64       |
+| `linux_arm64`     | Linux aarch64       |
 | `macos_arm64`     | macOS Apple Silicon |
 | `windows_x64.exe` | Windows x86\_64     |
 

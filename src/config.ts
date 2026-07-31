@@ -1,4 +1,5 @@
 import os from "node:os";
+import { getDevinConnection } from "./connection-store";
 
 export interface Config {
   /** v3 service-user token with the `account.outposts.machine` scope. */
@@ -15,7 +16,7 @@ export interface Config {
   sandboxRuntime: string;
   sandboxVcpus: number;
   sandboxTimeoutMs: number;
-  /** Queue poll cadence (ms). Same default as `devin worker start`: 5s. */
+  /** Queue and session-status poll cadence (ms). */
   pollIntervalMs: number;
   /** Max sessions served concurrently by this orchestrator. */
   maxConcurrent: number;
@@ -37,23 +38,33 @@ function integer(name: string, fallback: number): number {
   return parsed;
 }
 
-export function loadConfig(): Config {
-  // The Sandbox SDK reads VERCEL_TOKEN / VERCEL_TEAM_ID / VERCEL_PROJECT_ID (or
-  // VERCEL_OIDC_TOKEN) from the environment itself; we only validate presence
-  // so failures surface at startup instead of on the first claimed session.
-  if (!process.env.VERCEL_OIDC_TOKEN) {
+export async function loadConfig(): Promise<Config> {
+  const connection = await getDevinConnection();
+  if (!connection) {
+    throw new Error(
+      "No Devin connection. Connect Devin in the deployed setup page or set DEVIN_OUTPOSTS_TOKEN and DEVIN_OUTPOST_ID.",
+    );
+  }
+  // In a deployed Vercel Function, the Sandbox SDK obtains OIDC from the
+  // request context. It is not guaranteed to exist in process.env. Outside
+  // Vercel, require either a pulled OIDC token or explicit API credentials.
+  if (!process.env.VERCEL && !process.env.VERCEL_OIDC_TOKEN) {
     required("VERCEL_TOKEN");
     required("VERCEL_TEAM_ID");
     required("VERCEL_PROJECT_ID");
   }
   return {
-    devinToken: required("DEVIN_OUTPOSTS_TOKEN"),
-    outpostId: required("DEVIN_OUTPOST_ID"),
-    devinApiUrl: process.env.DEVIN_API_URL ?? "https://api.devin.ai",
+    devinToken: connection.accessToken,
+    outpostId: connection.outpostId,
+    devinApiUrl: connection.apiBaseUrl,
     staticBaseUrl:
       process.env.DEVIN_WORKER_STATIC_BASE_URL ??
       "https://static.devin.ai/devin-rs/remote",
-    acceptorId: process.env.ACCEPTOR_ID ?? `vercel-sandbox-${os.hostname()}`,
+    acceptorId:
+      process.env.ACCEPTOR_ID ??
+      (process.env.VERCEL
+        ? `vercel-sandbox-${connection.outpostId}`
+        : `vercel-sandbox-${os.hostname()}`),
     sandboxRuntime: process.env.SANDBOX_RUNTIME ?? "node24",
     // Cognition documents no machine size minimum (overview §Machine
     // dependencies), so default to the cheapest sensible box; bump per
@@ -63,7 +74,8 @@ export function loadConfig(): Config {
     // orchestrator dies without cleanup. Mid-session timeout death is cheap:
     // the stop snapshots, the session requeues, the next claim restores.
     sandboxTimeoutMs: integer("SANDBOX_TIMEOUT_MS", 20 * 60 * 1000),
-    pollIntervalMs: integer("POLL_INTERVAL_MS", 5000),
+    // Match Modal's Devin Outpost scheduler default.
+    pollIntervalMs: integer("POLL_INTERVAL_MS", 3000),
     maxConcurrent: integer("MAX_CONCURRENT", 5),
   };
 }

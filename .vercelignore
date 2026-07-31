@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+node_modules
+.next
+orchestrator*.log
+research/devin-outpost-k8s
+research/modal-devin

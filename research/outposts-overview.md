@@ -80,5 +80,6 @@ Partner platforms implement the orchestration loop for you — sessions run on t
 
 ## Limitations
 
-* Devin Outposts currently works only with multi-tenant hosting; it is not currently available with [Dedicated Tenant deployments](/enterprise/deployment/overview).
+* Devin Outposts is available on all Pro, Max, and Teams accounts.
+* Devin Outposts is also available on [Dedicated Tenant deployments](/enterprise/deployment/overview) but is off by default, since a few Devin features behave differently when agents run on customer-managed infrastructure. Your account team can go over the details and enable it.
 * Outposts shifts significant infrastructure and operational responsibility to the customer. Teams must secure and operate their remote development VMs at scale, including provisioning, isolation, access controls, capacity management, monitoring, and recovery. For security-conscious customers, we recommend [Dedicated Tenant (Dedicated SaaS)](/enterprise/deployment/overview), which provides a customer-isolated environment with security and orchestration managed by Cognition.

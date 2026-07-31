@@ -5,7 +5,7 @@ import { runSession } from "./session.js";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main(): Promise<void> {
-  const config = loadConfig();
+  const config = await loadConfig();
   const client = new DevinFleetClient(config.devinApiUrl, config.devinToken);
   const active = new Map<string, Promise<unknown>>();
   let shuttingDown = false;
