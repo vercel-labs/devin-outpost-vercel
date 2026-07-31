@@ -35,35 +35,9 @@ export function renderVercelInstallPage(connectUrl: string): string {
   <main>
     <h1>Connect Devin</h1>
     <p>Authorize this Vercel project to run Devin sessions in isolated Vercel Sandboxes.</p>
-    <a href="${escapeHtml(connectUrl)}" target="_blank" rel="noopener">Continue to Devin</a>
-    <div id="status" role="status">Waiting for Devin authorization…</div>
+    <a href="${escapeHtml(connectUrl)}">Continue to Devin</a>
+    <div role="status">You will return to Vercel after authorizing Devin.</div>
   </main>
-  <script>
-    const statusElement = document.getElementById("status");
-    async function checkStatus() {
-      try {
-        const response = await fetch("/api/vercel/status", {
-          credentials: "same-origin",
-          cache: "no-store"
-        });
-        if (response.status === 202) return;
-        const result = await response.json();
-        if (result.status === "complete" && result.nextUrl) {
-          statusElement.textContent = "Connected. Returning to Vercel…";
-          window.location.replace(result.nextUrl);
-          return;
-        }
-        if (result.status === "failed") {
-          statusElement.textContent = "Devin could not complete the connection. Close this window and retry.";
-          window.clearInterval(poller);
-        }
-      } catch {
-        statusElement.textContent = "Still waiting for Devin authorization…";
-      }
-    }
-    const poller = window.setInterval(checkStatus, 1000);
-    checkStatus();
-  </script>
 </body>
 </html>`;
 }

@@ -246,15 +246,15 @@ test("Vercel completion redirects are restricted to vercel.com", () => {
   assert.equal(safeVercelNextUrl("not-a-url"), null);
 });
 
-test("Vercel install page preserves the popup and escapes the Devin URL", () => {
+test("Vercel install page continues in the popup and escapes the Devin URL", () => {
   const page = renderVercelInstallPage(
     'https://app.devin.ai/outposts/connect?challenge="unsafe"&platform=linux',
   );
-  assert.match(page, /target="_blank"/);
-  assert.match(page, /fetch\("\/api\/vercel\/status"/);
+  assert.doesNotMatch(page, /target="_blank"/);
+  assert.doesNotMatch(page, /fetch\("\/api\/vercel\/status"/);
   assert.match(page, /challenge=&quot;unsafe&quot;&amp;platform=linux/);
   assert.doesNotMatch(page, /challenge="unsafe"/);
-  assert.match(page, /window\.location\.replace\(result\.nextUrl\)/);
+  assert.match(page, /You will return to Vercel after authorizing Devin/);
 });
 
 test("Devin completion page closes its authorization window", () => {
