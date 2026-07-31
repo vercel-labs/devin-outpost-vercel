@@ -63,9 +63,26 @@ export async function GET(request: Request): Promise<Response> {
     return errorResponse("Devin could not complete the connection.", 502);
   }
 
+  if (transaction.vercelProject) {
+    const response = NextResponse.redirect(
+      transaction.vercelProject.nextUrl,
+      303,
+    );
+    response.cookies.set("devin_connection_state", "", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 0,
+      path: "/api",
+    });
+    response.headers.set("Cache-Control", "no-store");
+    response.headers.set("Cross-Origin-Opener-Policy", "unsafe-none");
+    response.headers.set("Referrer-Policy", "no-referrer");
+    return response;
+  }
+
   const response = NextResponse.redirect(
-    transaction.vercelProject?.nextUrl ??
-      new URL("/?connected=1", request.url).toString(),
+    new URL("/?connected=1", request.url).toString(),
     303,
   );
   response.cookies.set("devin_connection_state", "", {
