@@ -3,7 +3,7 @@
 Run [Devin Outposts](https://docs.devin.ai/cloud/outposts/overview) sessions in
 isolated [Vercel Sandbox](https://vercel.com/docs/sandbox) microVMs.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel-labs%2Fdevin-outpost-vercel&integration-ids=oac_doeREEVvypk1AfuPfktJzjpZ&project-name=devin-outpost-vercel&repository-name=devin-outpost-vercel)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Ferulkey%2Fdevin-outpost-vercel-install&integration-ids=oac_doeREEVvypk1AfuPfktJzjpZ&project-name=devin-outpost-vercel&repository-name=devin-outpost-vercel)
 
 The deployed control plane runs entirely on Vercel:
 
